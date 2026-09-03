@@ -1,0 +1,8 @@
+{
+  "database": "PTPMSDB",
+  "db2Version": "12.1",
+  "source": "backup.sh",
+  "timestamp": "20260903070931",
+  "createdAt": "2026-09-03",
+  "description": "PTPMSAP schema (35 tables) initialised by gtky-db2migrator; no row data"
+}

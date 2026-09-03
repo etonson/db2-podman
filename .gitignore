@@ -1,0 +1,18 @@
+# 暫存檔案
+*.tmp
+*.swp
+*~
+# log 檔
+*.log
+# 建置產物
+build/
+target/
+
+# DB2 容器產生的資料庫狀態（實例、資料、日誌）
+db2_storage/
+
+# 資料庫備份檔動輒上百 MB，只保留目錄結構與 metadata
+backups/*/*
+!backups/*/metadata.json
+
+# 注意：.env 只存開發環境用的密碼，刻意不忽略（見 README）
