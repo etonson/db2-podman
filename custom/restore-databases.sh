@@ -80,8 +80,15 @@ restore_database() {
     echo "備份檔：$(basename "$BACKUP_FILE")"
     echo "[開始] 正在從備份還原 '$SOURCE_DB' -> '$DB_NAME'..."
 
-    su - "$INSTANCE_USER" -c \
-        "db2 restore database $SOURCE_DB from $BACKUP_DIR taken at $TIMESTAMP into $DB_NAME without prompting"
+    # 這裡已經把空資料庫 drop 掉了，還原再失敗（備份檔損毀、時間戳對不上…）
+    # 容器就會停在「一個資料庫都沒有」的狀態。所以失敗時要把空資料庫建回來，
+    # 至少讓應用程式連得上，也讓 setup-app-user.sh 的授權不會整段失敗。
+    if ! su - "$INSTANCE_USER" -c \
+        "db2 restore database $SOURCE_DB from $BACKUP_DIR taken at $TIMESTAMP into $DB_NAME without prompting"; then
+        echo "[錯誤] '$DB_NAME' 還原失敗，改建立一個空資料庫作為後備。"
+        su - "$INSTANCE_USER" -c "db2 create database $DB_NAME" || true
+        return
+    fi
 
     # 還原成不同名稱時 DB2 會進入 ROLL-FORWARD PENDING，必須收尾才連得上
     su - "$INSTANCE_USER" -c "db2 rollforward database $DB_NAME to end of backup and complete" || true
@@ -110,6 +117,14 @@ else
     if [ "$found_any" = false ]; then
         echo "==> [警告] 在 $BACKUP_ROOT 下找不到任何備份目錄。"
     fi
+fi
+
+# 保底：確保 DBNAME 指定的資料庫一定存在。
+# volume 已經初始化過的話，官方 entrypoint 會判定「已設定完成」而不再建資料庫；
+# 萬一先前的資料庫被 drop 掉又沒有備份可還原，沒有這段就會永遠停在空的狀態。
+if [ -n "${DBNAME:-}" ] && ! su - "$INSTANCE_USER" -c "db2 list db directory" 2>/dev/null | grep -qiw "$DBNAME"; then
+    echo "==> 資料庫 $DBNAME 不存在且無備份可還原，建立空資料庫。"
+    su - "$INSTANCE_USER" -c "db2 create database $DBNAME" || true
 fi
 
 echo "==> 所有還原程序結束。"
