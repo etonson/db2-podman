@@ -89,5 +89,15 @@ cd ../gtky-db2migrator/db2-migrator && ./sync-to-db.sh
 2. **改名專案目錄後資料庫像是消失了**：bind mount 的來源路徑在建立容器時就寫死，
    目錄改名後 `podman start` 會在舊路徑建一個空目錄掛上去。
 
+### 具名 volume 要加上 `suid,dev,exec`
+podman 的具名 volume 預設帶 `nosuid,nodev`，而 DB2 開機時會把 `/database`
+重新掛成 suid（`sqllib/adm/` 底下有 setuid 執行檔）。少了這個選項會看到：
+
+```
+(*) Remounting /database with suid... 
+mount: /database: permission denied.
+SQL1042C  An unexpected system error occurred.
+```
+
 ### 資料庫名稱上限 8 個字元
 `backups/` 的目錄名就是目標資料庫名稱，超過 8 個字元會被 `SQL2040N` 擋下來。
