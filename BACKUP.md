@@ -6,7 +6,8 @@
 ## 備份目錄結構
 
 所有備份都放在 `backups/{database}/`。`docker-compose.yml` 會把本機 `./backups`
-掛載到容器內的 `/database/backups`，因此容器內的備份與還原都會直接對應到本機檔案。
+bind mount 到容器內的 `/database/backups`，因此容器內的備份與還原都會直接對應到本機檔案。
+（資料庫本體則是放在具名 volume `db2_data`，不落在專案目錄下。）
 
 ```text
 backups/
@@ -96,7 +97,10 @@ RESTORE_DB=PTPMSDB podman-compose up -d
   `backup.sh` 會先 `FORCE APPLICATIONS ALL` 踢掉所有連線，
   **執行前請確認沒有應用程式正在使用資料庫**。若要線上備份，需先改成保存日誌（archive logging）。
 * **資料庫已存在時不覆蓋**：自動還原時若目標資料庫已存在，腳本會跳過。
-  要重新還原必須先 `DROP DATABASE`，或清掉 `db2_storage/` 重建容器。
+  要重新還原必須先 `DROP DATABASE`，或移除 `db2_data` volume 重建容器。
 * **備份檔不進版控**：`backups/*/` 下的備份檔動輒上百 MB，`.gitignore` 只保留 `metadata.json`。
 * **權限**：備份檔在容器內屬於 `db2inst1`，在宿主機上會顯示成 subuid（例如 `100999`）。
   要在宿主機搬動或刪除，請用 `podman unshare`。
+
+* **資料庫名稱上限 8 個字元**：`backups/` 的目錄名就是目標資料庫名稱，
+  超過 8 個字元會被 `SQL2040N` 擋下來。

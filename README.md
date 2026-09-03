@@ -26,9 +26,17 @@ podman-compose logs -f          # 等到出現 Setup has completed
 
 | 路徑 | 說明 | 進版控 |
 | --- | --- | --- |
-| `backups/{database}/` | 資料庫備份檔與 `metadata.json`，掛載成容器的 `/database/backups` | 只有 `metadata.json` |
-| `db2_storage/` | DB2 自己產生的實例、資料與日誌，掛載成 `/database` | 否 |
+| `backups/{database}/` | 資料庫備份檔與 `metadata.json`，bind mount 成容器的 `/database/backups` | 只有 `metadata.json` |
 | `custom/` | 開機時自動執行的初始化腳本（還原資料庫、建帳號），會複製到 `/var/custom/` | 是 |
+
+資料庫本體（實例、資料、日誌）放在具名 volume `db2_data` 裡，由 podman 管理，
+不落在專案目錄下。這樣可以避開 rootless podman 的 uid 映射問題，
+專案目錄改名或執行 `git clean` 也不會弄丟資料庫。要清掉整個資料庫重來：
+
+```bash
+podman-compose down
+podman volume rm db2-podman_db2_data
+```
 
 ## 常用指令
 
@@ -47,7 +55,7 @@ db2 connect to PTPMSDB user ptpmsap using 'A@t123456'
 ```
 
 還原是**容器啟動時自動做的**：把備份放進 `backups/{database}/`，
-清掉 `db2_storage/` 後重建容器，`custom/restore-databases.sh` 就會掃描並還原。
+清掉 `db2_data` volume 後重建容器，`custom/restore-databases.sh` 就會掃描並還原。
 資料庫已存在則跳過，不會覆蓋既有資料。要只還原其中一個：
 
 ```bash
@@ -69,22 +77,17 @@ cd ../gtky-db2migrator/db2-migrator && ./sync-to-db.sh
 
 ## 已知問題
 
-### 容器啟動後立刻 exit 1
-log 出現：
+### 不要把 `/database` bind mount 到專案目錄
+早期版本用 `./db2_storage:/database`，踩到兩個坑，改用具名 volume 後都消失了：
 
-```
-DBI20187E  The fencedid file ".../sqllib/adm/fencedid" is invalid because it is
-not owned by the "root":"db2iadm1".
-```
+1. **容器啟動後立刻 exit 1**：rootless podman 的 uid 映射會讓
+   `sqllib/adm/fencedid` 在容器內變成 `root:root`，`db2icrt` 拒絕建立實例：
+   ```
+   DBI20187E  The fencedid file ".../sqllib/adm/fencedid" is invalid because it is
+   not owned by the "root":"db2iadm1".
+   ```
+2. **改名專案目錄後資料庫像是消失了**：bind mount 的來源路徑在建立容器時就寫死，
+   目錄改名後 `podman start` 會在舊路徑建一個空目錄掛上去。
 
-rootless podman 的 uid 映射會讓 `fencedid` 在容器內變成 `root:root`，
-`db2icrt` 因此拒絕建立實例。修法：
-
-```bash
-podman unshare chown 0:1000 db2_storage/config/db2inst1/sqllib/adm/fencedid
-```
-
-### 搬動或改名專案目錄後要重建容器
-bind mount 的來源路徑是在建立容器時就寫死的。目錄改名後容器還能跑（inode 沒變），
-但一旦 `podman stop` 再 `start`，podman 會在舊路徑建一個空目錄掛上去，
-資料庫看起來就像整個消失了。改名後請 `podman rm` 再 `podman-compose up -d`。
+### 資料庫名稱上限 8 個字元
+`backups/` 的目錄名就是目標資料庫名稱，超過 8 個字元會被 `SQL2040N` 擋下來。

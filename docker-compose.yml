@@ -16,7 +16,9 @@ services:
       # 指定只還原某個資料庫；留空則掃描 backups/ 下全部
       - RESTORE_DB=${RESTORE_DB:-}
       - LICENSE=accept
-      - PERSIST_CONFIG=false  # 嘗試關閉持久化設定以避開 mount 權限問題
+      # 不要讓 DB2 把 sqllib 搬到 /database：具名 volume 是 nosuid，
+      # DB2 的 "Remounting /database with suid" 會失敗，導致 db2start 掛掉
+      - PERSIST_CONFIG=false
     ulimits:
       nofile:
         soft: 65536
@@ -31,13 +33,17 @@ services:
       - kernel.shmmax=68719476736
       - kernel.shmall=4294967296
     volumes:
-      # 改用單一目錄掛載，有助於減少權限問題
-      - ./db2_storage:/database
-      # 備份檔獨立掛載，才不會混在 DB2 產生的 db2_storage 裡
+      # 資料庫本體用具名 volume 交給 podman 管理。
+      # 不要 bind mount 到專案目錄：rootless podman 的 uid 映射會讓
+      # 容器內的檔案擁有者對不上（db2icrt 會因為 fencedid 的 owner 不對而失敗），
+      # 而且專案目錄一改名，下次啟動就會掛到一個空目錄上。
+      # podman 的具名 volume 預設是 nosuid,nodev；DB2 會把 /database 重新掛成
+      # suid（sqllib/adm 底下有 setuid 執行檔），掛不上去 db2start 就會 SQL1042C，
+      # 所以這裡明確指定 suid,dev,exec
+      - db2_data:/database:suid,dev,exec
+      # 只有備份檔用 bind mount，方便在宿主機存取與管理。
       # 結構為 backups/{database}/，還原時由 restore-databases.sh 掃描
       - ./backups:/database/backups
 
-# 移除原本的 volume 定義，改用本地目錄
-# volumes:
-#   db2_data:
-#   db2_log:
+volumes:
+  db2_data:

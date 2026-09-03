@@ -8,7 +8,7 @@
 build/
 target/
 
-# DB2 容器產生的資料庫狀態（實例、資料、日誌）
+# 舊版 bind mount 設計留下的資料庫目錄，已改用具名 volume，可直接刪除
 db2_storage/
 
 # 資料庫備份檔動輒上百 MB，只保留目錄結構與 metadata
