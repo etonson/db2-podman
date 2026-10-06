@@ -46,6 +46,95 @@ podman exec -it db2-gtky su - db2inst1
 db2 connect to PTPMSDB user ptpmsap using 'A@t123456'
 ```
 
+### DB2 基本操作
+
+以下都在 `su - db2inst1` 之後、`db2 connect` 連上資料庫的狀態下執行。
+SQL 要用雙引號包起來，否則 `*`、`(` 之類的字元會先被 shell 解讀。
+
+不想進容器互動時，可以在宿主機一行執行完：
+
+```bash
+podman exec db2-gtky su - db2inst1 -c \
+  "db2 connect to PTPMSDB user ptpmsap using 'A@t123456' >/dev/null && db2 list tables for schema PTPMSAP"
+```
+
+#### 查看 schema
+
+```bash
+db2 values current schema                  # 目前預設 schema（預設等於登入帳號）
+db2 set schema PTPMSAP                     # 切換預設 schema，之後 SQL 可省略 PTPMSAP. 前綴
+
+# 列出使用者自建的 schema（排除 SYS* 系統 schema）
+db2 "SELECT SCHEMANAME, OWNER FROM SYSCAT.SCHEMATA
+     WHERE SCHEMANAME NOT LIKE 'SYS%' AND SCHEMANAME NOT IN ('NULLID', 'SQLJ')"
+```
+
+本機正常會看到 `PTPMSAP`（應用程式資料表）、`DB2EPTS`、`LIQUIBASE`（migrator 的追蹤表）。
+
+#### 列出資料表（show tables）
+
+```bash
+db2 list tables                            # 目前 schema 的資料表
+db2 list tables for schema PTPMSAP         # 指定 schema
+db2 list tables for all                    # 所有 schema（含系統表，很長）
+
+# 用系統目錄查，可以自己加條件或排序
+db2 "SELECT TABNAME, TYPE FROM SYSCAT.TABLES
+     WHERE TABSCHEMA = 'PTPMSAP' ORDER BY TABNAME"
+```
+
+`TYPE`：`T` 資料表、`V` 檢視表、`A` 別名。
+
+#### 查看資料表結構（describe）
+
+```bash
+db2 describe table PTPMSAP.COMMON_CODE                 # 欄位、型別、長度、可否為 NULL
+db2 describe indexes for table PTPMSAP.COMMON_CODE     # 索引
+
+# 匯出建表 DDL（db2look 是獨立指令，不需要先 connect）
+db2look -d PTPMSDB -z PTPMSAP -t COMMON_CODE -e
+
+# 找出哪些資料表有某個欄位
+db2 "SELECT TABSCHEMA, TABNAME FROM SYSCAT.COLUMNS WHERE COLNAME = 'CODEKINDID'"
+```
+
+DB2 的物件名稱一律存成**大寫**，系統目錄查詢的條件也要用大寫（`'COMMON_CODE'`，不是 `'common_code'`）。
+
+#### 查詢資料
+
+```bash
+db2 "SELECT * FROM PTPMSAP.COMMON_CODE FETCH FIRST 10 ROWS ONLY"   # DB2 沒有 LIMIT
+
+# CLP 會依欄位定義長度輸出，VARCHAR(500) 會印得非常寬，可以用 SUBSTR 截短
+db2 "SELECT CODENAME, SUBSTR(CODEDESC1, 1, 40) AS VAL FROM PTPMSAP.COMMON_CODE"
+```
+
+#### 執行 SQL 檔
+
+```bash
+db2 -tvf /tmp/script.sql          # -t 以 ; 分隔、-v 顯示每一句、-f 讀檔
+db2 +c -tvf /tmp/script.sql       # +c 關閉 autocommit，確認後再 db2 commit 或 db2 rollback
+```
+
+檔案要先從宿主機複製進容器，並讓 `db2inst1` 讀得到：
+
+```bash
+podman cp ./script.sql db2-gtky:/tmp/script.sql
+podman exec db2-gtky chmod 644 /tmp/script.sql
+```
+
+#### 其他常用
+
+```bash
+db2 list active databases         # 目前啟用中的資料庫與連線數
+db2 list applications             # 誰連著資料庫（實例層級指令，靠 su - db2inst1 的身分執行）
+db2 "SELECT ID, AUTHOR, FILENAME, DATEEXECUTED FROM LIQUIBASE.DATABASECHANGELOG"   # migrator 套用紀錄
+db2 terminate                     # 結束連線與 CLP 背景程序
+```
+
+直接輸入 `db2` 會進入互動模式（提示字元 `db2 =>`），裡面的指令不用加 `db2` 前綴、
+也不用引號，輸入 `quit` 離開。
+
 ### 備份與還原
 詳細規範見 [BACKUP.md](BACKUP.md)。常用的是：
 
