@@ -9,6 +9,8 @@
 bind mount 到容器內的 `/database/backups`，因此容器內的備份與還原都會直接對應到本機檔案。
 （資料庫本體則是放在具名 volume `db2_data`，不落在專案目錄下。）
 
+版本控制只保留 `metadata.json`；新環境須另外取得實際備份檔。若目錄內只有中繼資料，還原腳本會略過，不能用它重建資料庫。
+
 ```text
 backups/
 ├── PTPMSDB/
@@ -44,17 +46,33 @@ backups/
 
 1. **特定還原**：若環境變數 `RESTORE_DB` 有值（例如 `RESTORE_DB=PTPMSDB`），則僅還原該資料庫。
 2. **全量還原**：若 `RESTORE_DB` 為空，則掃描 `/database/backups/*/`，依序還原。
-3. **跳過機制**：若資料庫已存在，則跳過該資料庫，避免覆蓋既有資料。
+3. **跳過機制**：先確認備份檔存在；若目標資料庫已有使用者資料表，則跳過，避免覆蓋既有資料。若只是官方 entrypoint 建立的空資料庫，腳本會先移除，再從備份還原。
 4. **目錄名即資料庫名**：目標資料庫名稱取自目錄名，與備份檔內記錄的來源名稱不同時，
    會自動用 `RESTORE ... INTO {目錄名}` 改名還原。
-5. **自動收尾**：改名還原會讓資料庫進入 `ROLL-FORWARD PENDING`，
-   腳本會自動執行 `ROLLFORWARD ... TO END OF BACKUP AND COMPLETE`，否則連不上。
+5. **還原失敗後備**：還原指令失敗時，腳本會嘗試重新建立空資料庫。沒有備份檔、也沒有目標資料庫時，腳本同樣會嘗試建立 `.env` 中 `DBNAME` 指定的空資料庫。
+6. **自動收尾**：改名還原可能讓資料庫進入 `ROLL-FORWARD PENDING`，
+   腳本會嘗試執行 `ROLLFORWARD ... TO END OF BACKUP AND COMPLETE`。請以容器日誌及實際連線確認還原結果。
 
-### 手動觸發特定還原
+### 指定還原資料庫
 
 ```bash
 RESTORE_DB=PTPMSDB podman-compose up -d
 ```
+
+這個變數只限制容器初始化時處理的備份目錄，不會覆蓋已有使用者資料表的資料庫。若容器已在執行，單純設定變數不會立即重新執行初始化腳本。
+
+## 完整重建
+
+刪除具名 volume 會永久清除其中的資料庫內容。先完成備份並確認 `backups/PTPMSDB/` 中有實際備份檔，再執行：
+
+```bash
+podman-compose down
+podman volume rm db2-podman_db2_data
+podman-compose up -d --build
+podman-compose logs -f
+```
+
+Volume 名稱中的 `db2-podman` 是預設 Compose 專案名稱；若有另設專案名稱，請先用 `podman volume ls` 確認實際名稱。日誌出現 `Setup has completed` 後，再檢查資料表與還原結果。
 
 ## 資料庫備份腳本
 
@@ -96,8 +114,7 @@ RESTORE_DB=PTPMSDB podman-compose up -d
 * **只能離線備份**：目前實例使用循環日誌（circular logging），DB2 不允許線上備份。
   `backup.sh` 會先 `FORCE APPLICATIONS ALL` 踢掉所有連線，
   **執行前請確認沒有應用程式正在使用資料庫**。若要線上備份，需先改成保存日誌（archive logging）。
-* **資料庫已存在時不覆蓋**：自動還原時若目標資料庫已存在，腳本會跳過。
-  要重新還原必須先 `DROP DATABASE`，或移除 `db2_data` volume 重建容器。
+* **有使用者資料表時不覆蓋**：自動還原會跳過這種資料庫。若要重新還原，請先備份並依上面的完整重建流程處理。
 * **備份檔不進版控**：`backups/*/` 下的備份檔動輒上百 MB，`.gitignore` 只保留 `metadata.json`。
 * **權限**：備份檔在容器內屬於 `db2inst1`，在宿主機上會顯示成 subuid（例如 `100999`）。
   要在宿主機搬動或刪除，請用 `podman unshare`。
